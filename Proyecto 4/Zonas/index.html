@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detector de Bahías de Parqueo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Detector de Bahías de Parqueo</h1>
+        
+        <div class="video-container">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="output-canvas"></canvas>
+            <div id="loading-overlay">
+                <p id="loading-message">Cargando modelos y OpenCV...</p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="start-btn">Iniciar Cámara</button>
+            <button id="calibrate-btn" disabled>Recalibrar Bahías</button>
+            <div class="status">
+                Estado: <span id="status-text">Esperando...</span>
+            </div>
+        </div>
+
+        <div class="stats">
+            <p>Bahías detectadas: <span id="bay-count">0</span></p>
+            <p>Ocupadas: <span id="occupied-count">0</span></p>
+            <p>Disponibles: <span id="available-count">0</span></p>
+        </div>
+    </div>
+
+    <!-- Scripts al final para asegurar que el DOM esté listo -->
+    <script src="app.js"></script>
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+    <!-- COCO-SSD Model -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+    <!-- OpenCV.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.3/dist/opencv.js" type="text/javascript"></script>
+</body>
+</html>

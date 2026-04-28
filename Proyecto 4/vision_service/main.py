@@ -11,13 +11,18 @@ CORS(app)
 
 # Configuraciones
 JSON_FILE = 'espacios.json'
-FRAME_BASE_FILE = 'frame_base.jpg'
-THRESHOLD_VAL = 45  # Aumentado para ignorar sombras tenues
-MIN_PIXELS_RATIO = 0.20  # Aumentado para ser más selectivo
-MORP_KERNEL = np.ones((5, 5), np.uint8)
+# Rangos de color amarillo en HSV (ULTRA ESTRICTOS)
+LOWER_YELLOW = np.array([20, 150, 150]) 
+UPPER_YELLOW = np.array([35, 255, 255])
+# Umbral de presencia de color (porcentaje de amarillo dentro del círculo)
+COLOR_THRESHOLD = 0.40 
 
-# Estado global de los espacios
+# Configuración de persistencia
+PERSISTENCE_THRESHOLD = 8 # Frames para confirmar cambio
+
+# Estado global
 estado_espacios = []
+historial_conteo = {}
 
 def load_espacios():
     try:
@@ -28,82 +33,102 @@ def load_espacios():
         print(f"Error: No se encontró {JSON_FILE}")
         return []
 
-def detect_occupancy():
-    global estado_espacios
+def detect_occupancy(video_source):
+    global estado_espacios, historial_conteo
     
     espacios = load_espacios()
     if not espacios:
+        print("Error: No hay marcadores definidos. Corre calibration.py primero.")
         return
 
-    frame_base = cv2.imread(FRAME_BASE_FILE)
-    if frame_base is None:
-        print(f"Error: No se pudo cargar {FRAME_BASE_FILE}")
-        return
+    # Inicializar historial
+    for esp in espacios:
+        historial_conteo[esp['id']] = {"count": 0, "status_actual": "libre"}
 
-    frame_base_gray = cv2.cvtColor(frame_base, cv2.COLOR_BGR2GRAY)
-    frame_base_gray = cv2.GaussianBlur(frame_base_gray, (21, 21), 0)
-
-    # URL de la cámara (debe ser la misma que en la calibración)
-    video_source = input("Ingrese URL de IP Webcam para MONITOREO (o Enter para webcam local): ")
+    # Inicializar cámara
     if not video_source:
-        video_source = 0
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(video_source)
     
-    cap = cv2.VideoCapture(video_source)
+    if not cap.isOpened():
+        print(f"Error: No se pudo abrir la fuente de video.")
+        return
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Error al leer de la cámara")
             break
 
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame_gray = cv2.GaussianBlur(frame_gray, (21, 21), 0)
-
-        # Diferencia absoluta
-        diff = cv2.absdiff(frame_base_gray, frame_gray)
-        _, thresh = cv2.threshold(diff, THRESHOLD_VAL, 255, cv2.THRESH_BINARY)
-        
-        # --- MEJORA PARA SOMBRAS ---
-        # 1. Eliminar ruido pequeño (sombras tenues)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, MORP_KERNEL)
-        # 2. Rellenar huecos en el objeto detectado (el carro)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, MORP_KERNEL)
-        # 3. Suavizado adicional
-        thresh = cv2.medianBlur(thresh, 5)
-        # ---------------------------
+        # Convertir a HSV para detectar el amarillo
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # Crear máscara de amarillo
+        mask_yellow = cv2.inRange(hsv, LOWER_YELLOW, UPPER_YELLOW)
+        # Limpiar ruido
+        kernel = np.ones((5,5), np.uint8)
+        mask_yellow = cv2.morphologyEx(mask_yellow, cv2.MORPH_OPEN, kernel)
 
         nuevos_estados = []
         
         for esp in espacios:
-            x, y, w, h = esp['x'], esp['y'], esp['w'], esp['h']
-            roi_diff = thresh[y:y+h, x:x+w]
+            x, y, r = esp['x'], esp['y'], esp['r']
+            esp_id = esp['id']
             
-            # Contar píxeles blancos (diferencia)
-            count = cv2.countNonZero(roi_diff)
-            total_pixels = w * h
-            ratio = count / total_pixels
+            # Definir el área de búsqueda (un poco más grande que el radio para compensar movimiento)
+            search_r = r + 10
+            y1, y2 = max(0, y - search_r), min(frame.shape[0], y + search_r)
+            x1, x2 = max(0, x - search_r), min(frame.shape[1], x + search_r)
             
-            estado = "ocupado" if ratio > MIN_PIXELS_RATIO else "libre"
+            roi_mask = mask_yellow[y1:y2, x1:x2]
+            
+            # Contar píxeles amarillos visibles
+            yellow_pixels = cv2.countNonZero(roi_mask)
+            # El área esperada del círculo
+            expected_area = np.pi * (r**2)
+            
+            # Si el porcentaje de amarillo es bajo, el marcador está tapado
+            ratio = yellow_pixels / expected_area
+            estado_instante = "libre" if ratio > COLOR_THRESHOLD else "ocupado"
+            
+            # Persistencia
+            hist = historial_conteo[esp_id]
+            if estado_instante == hist["status_actual"]:
+                hist["count"] = 0
+            else:
+                hist["count"] += 1
+                
+            if hist["count"] >= PERSISTENCE_THRESHOLD:
+                hist["status_actual"] = estado_instante
+                hist["count"] = 0
+            
             nuevos_estados.append({
-                "id": esp['id'],
-                "estado": estado
+                "id": esp_id,
+                "estado": hist["status_actual"]
             })
 
-            # Dibujar en el frame para visualización
-            color = (0, 0, 255) if estado == "ocupado" else (0, 255, 0)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(frame, f"{esp['id']}: {estado}", (x, y - 10), 
+            # Dibujar visualización
+            color = (0, 0, 255) if hist["status_actual"] == "ocupado" else (0, 255, 0)
+            # Dibujar el círculo de calibración
+            cv2.circle(frame, (x, y), r, color, 2)
+            # Dibujar el área de búsqueda (línea delgada)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 1)
+            cv2.putText(frame, f"ID {esp_id}: {hist['status_actual']}", (x - 20, y - search_r - 5), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         estado_espacios = nuevos_estados
         
-        cv2.imshow('Monitoreo en Tiempo Real', frame)
-        cv2.imshow('Mascara de Deteccion (Filtrada)', thresh)
+        cv2.imshow('Monitoreo por Marcadores Amarillos', frame)
+        cv2.imshow('Deteccion de Color Amarillo', mask_yellow)
+        
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
+
+@app.route('/')
+def home():
+    return "Servicio de Visión funcionando. Usa /api/espacios para ver los datos."
 
 @app.route('/api/espacios', methods=['GET'])
 def get_espacios():
@@ -113,10 +138,13 @@ def run_flask():
     app.run(host='0.0.0.0', port=5000)
 
 if __name__ == '__main__':
-    # Iniciar detección en un hilo separado para que Flask no bloquee
-    # O viceversa. Usaremos el hilo principal para OpenCV y uno secundario para Flask
+    # Pedir la fuente de video ANTES de iniciar Flask para evitar logs mezclados
+    video_source = input("Ingrese URL de IP Webcam para MONITOREO (o Enter para webcam local): ")
+    
+    # Iniciar Flask en un hilo secundario
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
     
-    detect_occupancy()
+    # Iniciar detección en el hilo principal
+    detect_occupancy(video_source)

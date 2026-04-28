@@ -1,0 +1,16 @@
+<div class="container">
+  <h1>Monitoreo de Parqueo en Tiempo Real</h1>
+  
+  <div class="parking-map">
+    <div *ngFor="let espacio of espacios" 
+         class="parking-spot" 
+         [ngClass]="espacio.estado">
+      <div class="id">{{ espacio.id }}</div>
+      <div class="status">{{ espacio.estado | uppercase }}</div>
+    </div>
+  </div>
+
+  <div *ngIf="espacios.length === 0" class="no-data">
+    Esperando datos del servidor...
+  </div>
+</div>

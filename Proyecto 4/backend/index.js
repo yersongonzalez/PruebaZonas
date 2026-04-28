@@ -9,6 +9,11 @@ const VISION_SERVICE_URL = 'http://localhost:5000/api/espacios';
 app.use(cors());
 app.use(express.json());
 
+// Ruta raíz para verificar que el backend funciona
+app.get('/', (req, res) => {
+    res.send('Backend de Parqueadero funcionando. Usa /api/espacios para ver los datos.');
+});
+
 // Endpoint para obtener el estado de los espacios
 app.get('/api/espacios', async (req, res) => {
     try {
